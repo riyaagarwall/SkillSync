@@ -1,0 +1,3 @@
+ALTER TABLE timesheets
+    ADD COLUMN IF NOT EXISTS reviewed_by INT REFERENCES employees(id),
+    ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;

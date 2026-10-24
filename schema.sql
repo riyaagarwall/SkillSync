@@ -63,5 +63,7 @@ CREATE TABLE timesheets (
     hours NUMERIC(4,1) NOT NULL CHECK (hours >= 0 AND hours <= 80),
     status VARCHAR(10) NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'approved', 'rejected')),
+    reviewed_by INT REFERENCES employees(id),
+    reviewed_at TIMESTAMPTZ,
     UNIQUE (allocation_id, week_start)
 );

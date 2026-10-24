@@ -1,5 +1,5 @@
 import os
-from datetime import date
+from datetime import date, timedelta
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -290,6 +290,124 @@ def delete_allocation(allocation_id):
     finally:
         conn.close()
     return jsonify(deleted=allocation_id)
+
+
+
+
+MAX_WEEKLY_HOURS = 60  # business rule: change it if your company allows more
+
+
+@app.route("/api/timesheets", methods=["POST"])
+def submit_timesheet():
+    data = request.get_json(silent=True) or {}
+
+    try:
+        allocation_id = int(data["allocation_id"])
+        week_start = date.fromisoformat(data["week_start"])
+        hours = float(data["hours"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify(error="allocation_id, week_start (like 2026-11-09) and hours are required"), 400
+    if week_start.weekday() != 0:
+        return jsonify(error="week_start must be a Monday"), 400
+    if not 0 <= hours <= MAX_WEEKLY_HOURS:
+        return jsonify(error=f"hours must be between 0 and {MAX_WEEKLY_HOURS}"), 400
+
+    conn = get_db()
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("SELECT id, start_date, end_date FROM allocations WHERE id = %s",
+                        (allocation_id,))
+            alloc = cur.fetchone()
+            if alloc is None:
+                return jsonify(error="Allocation not found"), 404
+
+            # The week (Monday to Sunday) must overlap the allocation dates
+            week_end = week_start + timedelta(days=6)
+            if week_start > alloc["end_date"] or week_end < alloc["start_date"]:
+                return jsonify(error="That week is outside the allocation dates "
+                                     f"({alloc['start_date']} to {alloc['end_date']})"), 400
+
+            cur.execute("""
+                SELECT id, status FROM timesheets
+                WHERE allocation_id = %s AND week_start = %s FOR UPDATE
+            """, (allocation_id, week_start))
+            existing = cur.fetchone()
+
+            if existing is None:
+                cur.execute("""
+                    INSERT INTO timesheets (allocation_id, week_start, hours)
+                    VALUES (%s, %s, %s) RETURNING id
+                """, (allocation_id, week_start, hours))
+                return jsonify(id=cur.fetchone()["id"], status="pending", hours=hours), 201
+
+            if existing["status"] == "rejected":
+                # A rejected week can be corrected and sent for review again
+                cur.execute("""
+                    UPDATE timesheets
+                    SET hours = %s, status = 'pending', reviewed_by = NULL, reviewed_at = NULL
+                    WHERE id = %s
+                """, (hours, existing["id"]))
+                return jsonify(id=existing["id"], status="pending", hours=hours), 200
+
+            return jsonify(error=f"A {existing['status']} timesheet already exists for that week"), 409
+    finally:
+        conn.close()
+
+
+@app.route("/api/timesheets")
+def list_timesheets():
+    status = request.args.get("status")
+    if status and status not in ("pending", "approved", "rejected"):
+        return jsonify(error="status must be pending, approved or rejected"), 400
+
+    return jsonify(query("""
+        SELECT t.id, e.name AS employee, p.name AS project,
+               t.week_start::text AS week_start, t.hours::float AS hours, t.status,
+               r.name AS reviewed_by, t.reviewed_at::text AS reviewed_at
+        FROM timesheets t
+        JOIN allocations a ON a.id = t.allocation_id
+        JOIN employees e ON e.id = a.employee_id
+        JOIN projects p ON p.id = a.project_id
+        LEFT JOIN employees r ON r.id = t.reviewed_by
+        WHERE (%s::text IS NULL OR t.status = %s)
+        ORDER BY t.week_start, e.name
+    """, (status, status)))
+
+
+@app.route("/api/timesheets/<int:timesheet_id>/review", methods=["POST"])
+def review_timesheet(timesheet_id):
+    data = request.get_json(silent=True) or {}
+    decision = data.get("decision")
+    try:
+        reviewer_id = int(data["reviewer_id"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify(error="reviewer_id is required"), 400
+    if decision not in ("approved", "rejected"):
+        return jsonify(error="decision must be 'approved' or 'rejected'"), 400
+
+    conn = get_db()
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("SELECT name, role FROM employees WHERE id = %s", (reviewer_id,))
+            reviewer = cur.fetchone()
+            if reviewer is None or reviewer["role"] not in ("pm", "admin"):
+                return jsonify(error="Only a project manager or admin can review timesheets"), 403
+
+            cur.execute("SELECT status FROM timesheets WHERE id = %s FOR UPDATE", (timesheet_id,))
+            ts = cur.fetchone()
+            if ts is None:
+                return jsonify(error="Timesheet not found"), 404
+            if ts["status"] != "pending":
+                return jsonify(error=f"This timesheet is already {ts['status']}"), 409
+
+            cur.execute("""
+                UPDATE timesheets
+                SET status = %s, reviewed_by = %s, reviewed_at = NOW()
+                WHERE id = %s
+            """, (decision, reviewer_id, timesheet_id))
+    finally:
+        conn.close()
+    return jsonify(id=timesheet_id, status=decision, reviewed_by=reviewer["name"])
 
 
 if __name__ == "__main__":
