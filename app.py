@@ -187,5 +187,110 @@ def team_builder():
     )
 
 
+
+
+@app.route("/api/allocations", methods=["POST"])
+def create_allocation():
+    data = request.get_json(silent=True) or {}
+
+    try:
+        employee_id = int(data["employee_id"])
+        project_id = int(data["project_id"])
+        percent = int(data["percent_allocated"])
+        start = date.fromisoformat(data["start_date"])
+        end = date.fromisoformat(data["end_date"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify(error="employee_id, project_id, percent_allocated, start_date and "
+                             "end_date are required (dates look like 2026-11-01)"), 400
+    if not 1 <= percent <= 100:
+        return jsonify(error="percent_allocated must be between 1 and 100"), 400
+    if end < start:
+        return jsonify(error="end_date cannot be before start_date"), 400
+
+    conn = get_db()
+    try:
+        with conn:  # commits if everything works, rolls back if anything fails
+            with conn.cursor() as cur:
+                # Lock this employee's row so two requests at the same moment
+                # cannot both pass the check and double-book them.
+                cur.execute("SELECT id, name, role FROM employees WHERE id = %s FOR UPDATE",
+                            (employee_id,))
+                emp = cur.fetchone()
+                if emp is None:
+                    return jsonify(error="Employee not found"), 404
+                if emp["role"] != "employee":
+                    return jsonify(error="Only employees can be allocated to projects"), 400
+
+                cur.execute("SELECT id, name, start_date, end_date FROM projects WHERE id = %s",
+                            (project_id,))
+                proj = cur.fetchone()
+                if proj is None:
+                    return jsonify(error="Project not found"), 404
+                if start < proj["start_date"] or end > proj["end_date"]:
+                    return jsonify(error=f"Allocation must stay within the project dates "
+                                         f"({proj['start_date']} to {proj['end_date']})"), 400
+
+                # Existing allocations that overlap the requested dates
+                cur.execute("""
+                    SELECT percent_allocated, start_date, end_date
+                    FROM allocations
+                    WHERE employee_id = %s AND start_date <= %s AND end_date >= %s
+                """, (employee_id, end, start))
+                existing = cur.fetchall()
+
+                # Workload only goes up on the day an allocation starts, so it is
+                # enough to check the first day and each start date inside the window.
+                check_days = {start} | {a["start_date"] for a in existing if a["start_date"] > start}
+                peak = max(
+                    sum(a["percent_allocated"] for a in existing
+                        if a["start_date"] <= day <= a["end_date"])
+                    for day in check_days
+                )
+                if peak + percent > 100:
+                    return jsonify(
+                        error=f"{emp['name']} would be over 100% booked",
+                        current_peak_percent=peak,
+                        requested_percent=percent,
+                    ), 409
+
+                cur.execute("""
+                    INSERT INTO allocations
+                        (employee_id, project_id, start_date, end_date, percent_allocated)
+                    VALUES (%s, %s, %s, %s, %s) RETURNING id
+                """, (employee_id, project_id, start, end, percent))
+                new_id = cur.fetchone()["id"]
+    finally:
+        conn.close()
+
+    return jsonify(id=new_id, employee=emp["name"], project=proj["name"],
+                   percent_allocated=percent, peak_after=peak + percent), 201
+
+
+@app.route("/api/allocations")
+def list_allocations():
+    return jsonify(query("""
+        SELECT a.id, e.name AS employee, p.name AS project,
+               a.start_date::text AS start_date, a.end_date::text AS end_date,
+               a.percent_allocated
+        FROM allocations a
+        JOIN employees e ON e.id = a.employee_id
+        JOIN projects p ON p.id = a.project_id
+        ORDER BY p.name, e.name
+    """))
+
+
+@app.route("/api/allocations/<int:allocation_id>", methods=["DELETE"])
+def delete_allocation(allocation_id):
+    conn = get_db()
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM allocations WHERE id = %s RETURNING id", (allocation_id,))
+            if cur.fetchone() is None:
+                return jsonify(error="Allocation not found"), 404
+    finally:
+        conn.close()
+    return jsonify(deleted=allocation_id)
+
+
 if __name__ == "__main__":
     app.run(debug=True)
