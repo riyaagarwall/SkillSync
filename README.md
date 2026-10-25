@@ -37,6 +37,7 @@ to match people to new projects. It replaces manual, spreadsheet-based resourcin
 | GET | `/api/reports/availability` | Who is free, optionally `?as_of=2026-12-01` |
 | GET | `/api/reports/profitability` | Revenue, cost and margin per project |
 | GET | `/api/reports/progress` | Milestone completion per project |
+| GET | `/api/projects` | List projects with their required skills |
 
 ### Example: find a team
 ```
