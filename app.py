@@ -4,7 +4,7 @@ from datetime import date, timedelta
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, render_template, request
 
 load_dotenv(override=True)
 app = Flask(__name__)
@@ -27,6 +27,9 @@ def query(sql, params=None, one=False):
     finally:
         conn.close()
 
+@app.route("/")
+def home():
+    return render_template("index.html")
 
 @app.route("/api/health")
 def health():
@@ -408,6 +411,89 @@ def review_timesheet(timesheet_id):
     finally:
         conn.close()
     return jsonify(id=timesheet_id, status=decision, reviewed_by=reviewer["name"])
+
+@app.route("/api/milestones", methods=["POST"])
+def create_milestone():
+    data = request.get_json(silent=True) or {}
+    try:
+        project_id = int(data["project_id"])
+        title = str(data["title"]).strip()
+        due = date.fromisoformat(data["due_date"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify(error="project_id, title and due_date (like 2027-01-31) are required"), 400
+    if not title:
+        return jsonify(error="title cannot be empty"), 400
+
+    proj = query("SELECT start_date, end_date FROM projects WHERE id = %s", (project_id,), one=True)
+    if proj is None:
+        return jsonify(error="Project not found"), 404
+    if not proj["start_date"] <= due <= proj["end_date"]:
+        return jsonify(error=f"due_date must be within the project dates "
+                             f"({proj['start_date']} to {proj['end_date']})"), 400
+
+    conn = get_db()
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO milestones (project_id, title, due_date)
+                VALUES (%s, %s, %s) RETURNING id
+            """, (project_id, title, due))
+            new_id = cur.fetchone()["id"]
+    finally:
+        conn.close()
+    return jsonify(id=new_id, status="pending"), 201
+
+
+@app.route("/api/milestones/<int:milestone_id>", methods=["PATCH"])
+def update_milestone(milestone_id):
+    data = request.get_json(silent=True) or {}
+    status = data.get("status")
+    if status not in ("pending", "in_progress", "done"):
+        return jsonify(error="status must be pending, in_progress or done"), 400
+
+    conn = get_db()
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("UPDATE milestones SET status = %s WHERE id = %s RETURNING id",
+                        (status, milestone_id))
+            if cur.fetchone() is None:
+                return jsonify(error="Milestone not found"), 404
+    finally:
+        conn.close()
+    return jsonify(id=milestone_id, status=status)
+
+
+@app.route("/api/reports/availability")
+def report_availability():
+    as_of = request.args.get("as_of")
+    if as_of:
+        try:
+            day = date.fromisoformat(as_of)
+        except ValueError:
+            return jsonify(error="as_of must look like 2026-12-01"), 400
+        rows = query("SELECT * FROM availability_on(%s)", (day,))
+    else:
+        rows = query("SELECT * FROM v_employee_availability")
+    return jsonify(as_of=as_of or str(date.today()), employees=rows)
+
+
+@app.route("/api/reports/profitability")
+def report_profitability():
+    return jsonify(query("""
+        SELECT project_id, project_name,
+               approved_hours::float AS approved_hours,
+               revenue::float AS revenue,
+               cost::float AS cost,
+               profit::float AS profit,
+               margin_percent::float AS margin_percent
+        FROM v_project_profitability
+        ORDER BY project_name
+    """))
+
+
+@app.route("/api/reports/progress")
+def report_progress():
+    return jsonify(query("SELECT * FROM v_project_progress ORDER BY project_name"))
 
 
 if __name__ == "__main__":
