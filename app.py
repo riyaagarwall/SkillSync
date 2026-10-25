@@ -352,7 +352,7 @@ def submit_timesheet():
                 """, (hours, existing["id"]))
                 return jsonify(id=existing["id"], status="pending", hours=hours), 200
 
-            return jsonify(error=f"A {existing['status']} timesheet already exists for that week"), 409
+            return jsonify(error=f"A timesheet for that week already exists and is {existing['status']}"), 409
     finally:
         conn.close()
 
