@@ -496,17 +496,32 @@ def report_progress():
 
 @app.route("/api/projects")
 def list_projects():
-    return jsonify(query("""
+    projects = query("""
         SELECT id, name, start_date::text AS start_date, end_date::text AS end_date,
                headcount, min_experience_years::float AS min_experience_years,
                billing_rate::float AS billing_rate
         FROM projects ORDER BY name
-    """))
+    """)
+    reqs = query("""
+        SELECT pr.project_id, s.name AS skill, pr.min_proficiency
+        FROM project_requirements pr JOIN skills s ON s.id = pr.skill_id
+        ORDER BY s.name
+    """)
+    for p in projects:
+        p["requirements"] = [
+            {"skill": r["skill"], "min_proficiency": r["min_proficiency"]}
+            for r in reqs if r["project_id"] == p["id"]
+        ]
+    return jsonify(projects)
     
 @app.route("/")
 def home():
     return jsonify(name="SkillSync API", status="running", health="/api/health")
 
+@app.after_request
+def allow_private_network(response):
+    response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
 
 if __name__ == "__main__":
     app.run(debug=True)
