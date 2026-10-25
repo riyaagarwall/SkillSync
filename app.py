@@ -1,6 +1,6 @@
 import os
 from datetime import date, timedelta
-
+from flask_cors import CORS
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
@@ -8,6 +8,7 @@ from flask import Flask, jsonify, render_template, request
 
 load_dotenv(override=True)
 app = Flask(__name__)
+CORS(app)
 
 # How much each factor counts towards the ranking score (must add up to 1.0)
 WEIGHTS = {"skills": 0.60, "experience": 0.15, "availability": 0.25}
@@ -27,9 +28,6 @@ def query(sql, params=None, one=False):
     finally:
         conn.close()
 
-@app.route("/")
-def home():
-    return render_template("index.html")
 
 @app.route("/api/health")
 def health():
@@ -494,6 +492,20 @@ def report_profitability():
 @app.route("/api/reports/progress")
 def report_progress():
     return jsonify(query("SELECT * FROM v_project_progress ORDER BY project_name"))
+
+
+@app.route("/api/projects")
+def list_projects():
+    return jsonify(query("""
+        SELECT id, name, start_date::text AS start_date, end_date::text AS end_date,
+               headcount, min_experience_years::float AS min_experience_years,
+               billing_rate::float AS billing_rate
+        FROM projects ORDER BY name
+    """))
+    
+@app.route("/")
+def home():
+    return jsonify(name="SkillSync API", status="running", health="/api/health")
 
 
 if __name__ == "__main__":
