@@ -6,6 +6,26 @@ to match people to new projects. It replaces manual, spreadsheet-based resourcin
 
 **Stack:** Python, Flask, PostgreSQL, SQL (views and functions), psycopg2
 
+
+## Screenshots
+The interface is React, generated with Lovable from this API. The backend, database design, matching logic and tests are my own.
+
+### Staarting Page (How the company's HR open to portal)
+![Team builder](screenshots/main-page.png)
+
+### Team builder (ranked matches and why others were left out)
+![Team builder](screenshots/team-builder.png)
+
+### Employees and team skill radar
+![Employees](screenshots/employees.png)
+
+### Allocations and timesheet approvals
+![Timesheets](screenshots/timesheets.png)
+
+### Reports
+![Availability](screenshots/reports-availability.png)
+![Profitability](screenshots/reports-profitability.png)
+
 ## What it does
 - **Skill profiles:** employees, skills, proficiency levels and certifications, served as JSON.
 - **Team builder:** a project manager sends the skills, minimum levels, experience, headcount and
