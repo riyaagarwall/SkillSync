@@ -4,6 +4,9 @@ A backend for an internal HR-tech portal that helps a company staff its projects
 employee's skills, proficiency scores (0 to 5), experience and certifications, then uses that data
 to match people to new projects. It replaces manual, spreadsheet-based resourcing.
 
+**Live demo:** https://pixel-perfect-replay-5051.lovable.app/ (React interface generated with Lovable)
+**Live API:** https://skillsync-1l0l.onrender.com/api/health (free hosting, so the first request can take about a minute)
+
 **Stack:** Python, Flask, PostgreSQL, SQL (views and functions), psycopg2
 
 
