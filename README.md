@@ -10,7 +10,7 @@ to match people to new projects. It replaces manual, spreadsheet-based resourcin
 ## Screenshots
 The interface is React, generated with Lovable from this API. The backend, database design, matching logic and tests are my own.
 
-### Staarting Page (How the company's HR open to portal)
+### Starting Page (How the company's HR open to portal)
 ![Team builder](screenshots/main-page.png)
 
 ### Team builder (ranked matches and why others were left out)
